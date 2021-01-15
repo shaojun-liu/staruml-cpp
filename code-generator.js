@@ -29,6 +29,7 @@ const path = require('path')
 const fs = require('fs')
 const codegen = require('./codegen-utils')
 
+
 var copyrightHeader = '/* Test header @ toori67 \n * This is Test\n * also test\n * also test again\n */'
 var versionString = 'v0.0.1'
 
@@ -50,17 +51,38 @@ class CppCodeGenerator {
     /** @member {string} */
     this.basePath = basePath
 
+    /** @member {string} */
+    this.tabString = '    '
+
     var doc = ''
+
     if (app.project.getProject().name && app.project.getProject().name.length > 0) {
       doc += '\nProject ' + app.project.getProject().name
     }
     if (app.project.getProject().author && app.project.getProject().author.length > 0) {
       doc += '\n@author ' + app.project.getProject().author
     }
+    
     if (app.project.getProject().version && app.project.getProject().version.length > 0) {
       doc += '\n@version ' + app.project.getProject().version
     }
+
     copyrightHeader = this.getDocuments(doc)
+  }
+
+  genDocHeader (elem, filename) {
+    var doc = ''
+
+    var nowstr = new Date(Date.now() - new Date().getTimezoneOffset()*60*1000).toISOString().substr(0, 10)
+    doc += '\nProject ' + app.project.getProject().name
+    doc += '\n@file ' + filename
+    doc += '\n@author ' + app.project.getProject().author
+    doc += '\n@brief \n' + elem.documentation.trim()+'\n'
+    doc += '\n@version ' + app.project.getProject().version
+    doc += '\n@date ' + nowstr;
+    doc += '\n\n@copyright ' + app.project.getProject().copyright
+    
+    return this.getDocuments(doc)
   }
 
   /**
@@ -94,6 +116,22 @@ class CppCodeGenerator {
       return absPath
     }
 
+    var writeClassDiagram = (codeWriter, elem, cppCodeGen) => {
+      var i
+
+      var classViews = elem.ownedViews.filter(function (v) {
+        return v instanceof type.UMLClassView 
+          || v instanceof type.UMLInterfaceView 
+          || v instanceof type.UMLEnumerationView
+      })
+
+      if (classViews.length > 0){
+        for (i = 0 ; i < classViews.length; i++){
+          codeWriter.writeLine('#include "' + classViews[i].model.name + '.' + _CPP_CODE_GEN_H + '"\n');
+        }
+      }
+    }
+
     var writeEnumeration = (codeWriter, elem, cppCodeGen) => {
       var i
       var modifierList = cppCodeGen.getModifiers(elem)
@@ -105,6 +143,24 @@ class CppCodeGenerator {
     }
 
     var writeClassHeader = (codeWriter, elem, cppCodeGen) => {
+
+      // add stl
+      codeWriter.writeLine('// stl')
+      codeWriter.writeLine('#include <memory>')
+      codeWriter.writeLine('#include <vector>')
+      codeWriter.writeLine('#include <string>')
+      codeWriter.writeLine()
+
+      // add thrid part lib
+      codeWriter.writeLine('// thrid part lib')
+      codeWriter.writeLine()
+
+      // doc
+      codeWriter.writeLine(cppCodeGen.getDocuments(
+        '@class ' + elem.name
+        + '\n@brief \n' + elem.documentation.trim()
+      ));
+
       var i
       var write = (items) => {
         var i
@@ -232,9 +288,9 @@ class CppCodeGenerator {
       // parsing class
       var methodList = cppCodeGen.classifyVisibility(elem.operations.slice(0))
       var docs = elem.name + ' implementation\n\n'
-      if (typeof elem.documentation === 'string') {
-        docs += elem.documentation
-      }
+      // if (typeof elem.documentation === 'string') {
+      //   docs += elem.documentation
+      // }
       codeWriter.writeLine(cppCodeGen.getDocuments(docs))
       writeClassMethod(methodList)
 
@@ -284,6 +340,11 @@ class CppCodeGenerator {
       file = getFilePath(_CPP_CODE_GEN_H)
       fs.writeFileSync(file, this.writeHeaderSkeletonCode(elem, options, writeEnumeration))
     }
+    else if (elem instanceof type.UMLClassDiagram) {
+      // generate ClassDiagram header ONLY elem_name.h
+      file = getFilePath(_CPP_CODE_GEN_H)
+      fs.writeFileSync(file, this.writeHeaderSkeletonCode(elem, options, writeClassDiagram))
+    }
   }
 
   /**
@@ -299,7 +360,7 @@ class CppCodeGenerator {
     var headerString = '_' + elem.name.toUpperCase() + '_H'
     var codeWriter = new codegen.CodeWriter(this.getIndentString(options))
     var includePart = this.getIncludePart(elem)
-    codeWriter.writeLine(copyrightHeader)
+    codeWriter.writeLine(this.genDocHeader(elem, elem.name + '.' + _CPP_CODE_GEN_H))
     codeWriter.writeLine()
     codeWriter.writeLine('#ifndef ' + headerString)
     codeWriter.writeLine('#define ' + headerString)
@@ -309,6 +370,7 @@ class CppCodeGenerator {
       codeWriter.writeLine(includePart)
       codeWriter.writeLine()
     }
+
     funct(codeWriter, elem, this)
 
     codeWriter.writeLine()
@@ -327,7 +389,7 @@ class CppCodeGenerator {
    */
   writeBodySkeletonCode (elem, options, funct) {
     var codeWriter = new codegen.CodeWriter(this.getIndentString(options))
-    codeWriter.writeLine(copyrightHeader)
+    codeWriter.writeLine(this.genDocHeader(elem, elem.name + '.' + _CPP_CODE_GEN_CPP))
     codeWriter.writeLine()
     codeWriter.writeLine('#include "' + elem.name + '.h"')
     codeWriter.writeLine()
@@ -417,32 +479,51 @@ class CppCodeGenerator {
     var realizations = app.repository.getRelationshipsOf(elem, function (rel) {
       return (rel instanceof type.UMLInterfaceRealization || rel instanceof type.UMLGeneralization)
     })
+    var dependencys = app.repository.getRelationshipsOf(elem, function (rel) {
+      return (rel instanceof type.UMLDependency)
+    })
 
+    
     // check for interface or class
-    for (i = 0; i < realizations.length; i++) {
-      var realize = realizations[i]
-      if (realize.target === elem) {
-        continue
+    if (dependencys.length > 0) {
+      headerString += '// Realizations\n'
+      for (i = 0; i < realizations.length; i++) {
+        var realize = realizations[i]
+        if (realize.target === elem) {
+          continue
+        }
+        headerString += '#include "' + trackingHeader(elem, realize.target) + '.h"\n'
       }
-      headerString += '#include "' + trackingHeader(elem, realize.target) + '.h"\n'
     }
 
-    // check for member variable
-    for (i = 0; i < associations.length; i++) {
-      var asso = associations[i]
-      var target
-      if (asso.end1.reference === elem && asso.end2.navigable === true && asso.end2.name.length !== 0) {
-        target = asso.end2.reference
-      } else if (asso.end2.reference === elem && asso.end1.navigable === true && asso.end1.name.length !== 0) {
-        target = asso.end1.reference
-      } else {
-        continue
+    // check for dependency
+    if (dependencys.length > 0 || associations.length > 0) {
+      headerString += '// Dependencys\n'
+      for (i = 0; i < dependencys.length; i++) {
+        var realize = dependencys[i]
+        if (realize.target === elem) {
+          continue
+        }
+        headerString += '#include "' + trackingHeader(elem, realize.target) + '.h"\n'
       }
-      if (target === elem) {
-        continue
+    
+      // check for member variable
+      for (i = 0; i < associations.length; i++) {
+        var asso = associations[i]
+        var target
+        if (asso.end1.reference === elem && asso.end2.navigable === true && asso.end2.name.length !== 0) {
+          target = asso.end2.reference
+        } else if (asso.end2.reference === elem && asso.end1.navigable === true && asso.end1.name.length !== 0) {
+          target = asso.end1.reference
+        } else {
+          continue
+        }
+        if (target === elem) {
+          continue
+        }
+        headerString += '#include "' + trackingHeader(elem, target) + '.h"\n'
       }
-      headerString += '#include "' + trackingHeader(elem, target) + '.h"\n'
-    }
+    } // check for dependency
     return headerString
   }
 
@@ -487,7 +568,10 @@ class CppCodeGenerator {
     if (elem.name.length > 0) {
       var terms = []
       // doc
-      var docs = this.getDocuments(elem.documentation)
+      var docs = ''
+      docs += '\n@brief ' + elem.documentation.trim()
+      docs = this.getMemberDocuments(docs)
+      
       // modifiers
       var _modifiers = this.getModifiers(elem)
       if (_modifiers.length > 0) {
@@ -501,7 +585,7 @@ class CppCodeGenerator {
       if (elem.defaultValue && elem.defaultValue.length > 0) {
         terms.push('= ' + elem.defaultValue)
       }
-      return (docs + terms.join(' ') + ';')
+      return ('\n' + docs + this.tabString + terms.join(' ') + ';')
     }
   }
 
@@ -514,7 +598,7 @@ class CppCodeGenerator {
    */
   getMethod (elem, isCppBody) {
     if (elem.name.length > 0) {
-      var docs = elem.documentation
+      var docs = ''
       var i
       var methodStr = ''
       // var isVirtaul = false
@@ -525,17 +609,54 @@ class CppCodeGenerator {
         methodStr += 'virtual '
       }
 
+      // doc brief
+      docs += '\n@brief \n'+ elem.documentation.trim() + '\n\n'
+
       var returnTypeParam = elem.parameters.filter(function (params) {
         return params.direction === 'return'
       })
       var inputParams = elem.parameters.filter(function (params) {
-        return params.direction === 'in'
+        return ['in', 'out', 'inout'].includes(params.direction)
       })
+
+      // inParam
       var inputParamStrings = []
-      for (i = 0; i < inputParams.length; i++) {
-        var inputParam = inputParams[i]
-        inputParamStrings.push(this.getType(inputParam) + ' ' + inputParam.name)
-        docs += '\n@param ' + inputParam.name
+      if (inputParams.length > 0) {
+        for (i = 0; i < inputParams.length; i++) {
+          var inputParam = inputParams[i]
+          var paramType = this.getType(inputParam)
+          inputParamStrings.push(paramType + ' ' + inputParam.name)
+          //doc 
+          var paramDirect = inputParam.direction
+          if (paramDirect == 'inout') paramDirect = 'in, out'
+          docs += '@param[' + paramDirect + '] ' + inputParam.name + ' '
+          if (inputParam.documentation) {
+            var paramName = this.getBrief(inputParam.documentation);
+            var paramDtl = this.getDetails(inputParam.documentation);
+            docs += this.getBrief(inputParam.documentation)
+            if (paramDtl.length > 0)
+              docs += '\n' + this.addTabString(this.getDetails(inputParam.documentation))
+          }
+          docs += '\n'
+        }
+        docs+='\n'
+      }
+      // retParam doc
+      if (returnTypeParam.length > 0) {
+        for (i = 0; i < returnTypeParam.length; i++) {
+          var retParam = returnTypeParam[i]
+          //doc 
+          docs += '@return ' + retParam.defaultValue + ' '
+          if (retParam.documentation) {
+            var retName = this.getBrief(retParam.documentation);
+            var retDtl = this.getDetails(retParam.documentation);
+            docs += this.getBrief(retParam.documentation)
+            if (paramDtl.length > 0)
+              docs += '\n' + this.addTabString(this.getDetails(retParam.documentation))
+          }
+          docs += '\n'
+        }
+        docs+='\n'
       }
 
       methodStr += ((returnTypeParam.length > 0) ? this.getType(returnTypeParam[0]) : 'void') + ' '
@@ -575,9 +696,10 @@ class CppCodeGenerator {
           } else {
             methodStr += indentLine + 'return null;'
           }
-          docs += '\n@return ' + returnType
+          // docs += '\n@return ' + returnType
         }
         methodStr += '\n}'
+        docs = this.getDocuments(docs)
       } else {
         methodStr += elem.name
         methodStr += '(' + inputParamStrings.join(', ') + ')'
@@ -587,9 +709,37 @@ class CppCodeGenerator {
           methodStr += ' = 0'
         }
         methodStr += ';'
+        methodStr = this.tabString + methodStr
+        docs = this.getMemberDocuments(docs)
       }
-      return '\n' + this.getDocuments(docs) + methodStr
+      return '\n' + docs + methodStr
     }
+  }
+
+  // the first line of text
+  getBrief (text) {
+    if (text.length>0) {
+      return text.trim().split('\n')[0];
+    }
+    return ''
+  }
+
+  // the text start from the second line to the end
+  getDetails (text) {
+    if (text.length>0) {
+      var lines = text.trim().split('\n')
+      if (lines.length < 2) return ''
+      var docs = ''
+      var i = 1
+      if (lines.length > 1){
+        for (i = 1; i < lines.length-1; i++) {
+          docs += lines[i] + '\n'
+        }
+      }
+      docs += lines[i]
+      return docs
+    }
+    return ''
   }
 
   /**
@@ -608,6 +758,47 @@ class CppCodeGenerator {
         docs += ' * ' + lines[i] + '\n'
       }
       docs += ' */\n'
+    }
+    return docs
+  }
+
+  /**
+   * generate member doc string from doc element
+   *
+   * @param {Object} text
+   * @return {Object} string
+   */
+  getMemberDocuments (text) {
+    var docs = ''
+    if ((typeof text === 'string') && text.length !== 0) {
+      var lines = text.trim().split('\n')
+      docs += this.tabString + '/**\n'
+      var i
+      for (i = 0; i < lines.length; i++) {
+        docs += this.tabString + ' * ' + lines[i] + '\n'
+      }
+      docs += this.tabString + ' */\n'
+    }
+    return docs
+  }
+
+  /**
+   * generate member doc string from doc element
+   *
+   * @param {Object} text
+   * @return {Object} string
+   */
+  addTabString (text) {
+    var docs = ''
+    if ((typeof text === 'string') && text.length !== 0) {
+      var lines = text.trim().split('\n')
+      var i = 0
+      if (lines.length>1) {
+        for (i = 0; i < lines.length-1; i++) {
+          docs += this.tabString + lines[i] + '\n'
+        }
+      }
+      docs += this.tabString + lines[i]
     }
     return docs
   }
@@ -670,18 +861,50 @@ class CppCodeGenerator {
       }
     }
 
+    // string => std::string
+    if (['string', 'String'].includes(_type)) {
+        _type = 'std::string';
+    }
+
+    // class => std::Ptr<class>
+    var refTypeMap = new Map([['none', 'std::weak_ptr'], ['shared','std::shared_ptr'], ['composite','std::shared_ptr']])
+
+    if (elem instanceof type.UMLParameter) {
+      if (elem.type instanceof type.UMLClass || _type == 'void') {
+        _type = 'std::shared_ptr<' + _type + '>';
+      }
+    } else if (elem instanceof type.UMLAttribute) {
+      if (elem.type instanceof type.UMLClass) {
+        _type = refTypeMap.get(elem.aggregation)+'<' + _type + '>';
+      }
+    } else if (elem instanceof type.UMLAssociationEnd) {
+      var anotherEnd = elem._parent.end1;
+      if ( elem == anotherEnd ) anotherEnd = elem._parent.end2;
+      if (refTypeMap.has(anotherEnd.aggregation))
+        _type = refTypeMap.get(anotherEnd.aggregation)+'<' + _type + '>';
+    }
+    
+
     // multiplicity
     if (elem.multiplicity) {
       if (['0..*', '1..*', '*'].includes(elem.multiplicity.trim())) {
         if (elem.isOrdered === true) {
-          _type = 'vector<' + _type + '>'
+          _type = 'std::vector<' + _type + '>'
         } else {
-          _type = 'vector<' + _type + '>'
+          _type = 'std::vector<' + _type + '>'
         }
       } else if (elem.multiplicity !== '1' && elem.multiplicity.match(/^\d+$/)) { // number
         // TODO check here
         _type += '[]'
       }
+    }
+
+    // UMLParameter
+    if (elem instanceof type.UMLParameter){
+      if (elem.type instanceof type.UMLClass || _type.indexOf('std::') != -1 ) { _type += '&';} // std::string std::vector ...
+      else if (['out', 'inout'].includes(elem.direction)) { _type += '&';} // int char ...
+
+      if (['in'].includes(elem.direction)) { _type = 'const ' + _type;}
     }
     return _type
   }
