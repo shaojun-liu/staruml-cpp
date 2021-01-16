@@ -105,6 +105,8 @@ class CppCodeGenerator {
   }
 
   generate (elem, basePath, options) {
+    if(options.useTab)
+      this.tabString = options.indentSpaces;
     this.genOptions = options
 
     var getFilePath = (extenstions) => {
@@ -922,11 +924,11 @@ class CppCodeGenerator {
     var refTypeMap = new Map([['none', 'std::weak_ptr'], ['shared','std::shared_ptr'], ['composite','std::shared_ptr']])
 
     if (elem instanceof type.UMLParameter) {
-      if (elem.type instanceof type.UMLClass || _type == 'void') {
+      if (elem.type instanceof type.UMLClass || elem.type instanceof type.UMLInterface || _type == 'void') {
         _type = 'std::shared_ptr<' + _type + '>';
       }
     } else if (elem instanceof type.UMLAttribute) {
-      if (elem.type instanceof type.UMLClass) {
+      if (elem.type instanceof type.UMLClass || elem.type instanceof type.UMLInterface) {
         _type = refTypeMap.get(elem.aggregation)+'<' + _type + '>';
       }
     } else if (elem instanceof type.UMLAssociationEnd) {
