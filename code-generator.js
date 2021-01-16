@@ -77,7 +77,8 @@ class CppCodeGenerator {
     doc += '\nProject ' + app.project.getProject().name
     doc += '\n@file ' + filename
     doc += '\n@author ' + app.project.getProject().author
-    doc += '\n@brief \n' + elem.documentation.trim()+'\n'
+    doc += '\n@brief \n'
+    if (elem.documentation.trim().length>0)doc += elem.documentation.trim()+'\n'
     doc += '\n@version ' + app.project.getProject().version
     doc += '\n@date ' + nowstr;
     doc += '\n\n@copyright ' + app.project.getProject().copyright
@@ -155,12 +156,6 @@ class CppCodeGenerator {
       codeWriter.writeLine('// thrid part lib')
       codeWriter.writeLine()
 
-      // doc
-      codeWriter.writeLine(cppCodeGen.getDocuments(
-        '@class ' + elem.name
-        + '\n@brief \n' + elem.documentation.trim()
-      ));
-
       var i
       var write = (items) => {
         var i
@@ -200,6 +195,7 @@ class CppCodeGenerator {
       var associations = app.repository.getRelationshipsOf(elem, function (rel) {
         return (rel instanceof type.UMLAssociation)
       })
+
       for (i = 0; i < associations.length; i++) {
         var asso = associations[i]
         if (asso.end1.reference === elem && asso.end2.navigable === true && asso.end2.name.length !== 0) {
@@ -225,14 +221,31 @@ class CppCodeGenerator {
       if (elem.isFinalSpecialization === true || elem.isLeaf === true) {
         finalModifier = ' final '
       }
+
+      // doc
+      var classDoc = '@class ' + elem.name + '\n@brief \n' 
+      if (elem.documentation.trim().length > 0 ) classDoc += elem.documentation.trim() + '\n'
+      classDoc += cppCodeGen.genTemplatePatamterDoc(elem)
+      classDoc =  cppCodeGen.getDocuments(classDoc)
+
       var templatePart = cppCodeGen.getTemplateParameter(elem)
       if (templatePart.length > 0) {
-        codeWriter.writeLine(templatePart)
+        templatePart += '\n'
       }
 
-      codeWriter.writeLine('class ' + elem.name + finalModifier + writeInheritance(elem) + ' {')
+      var classKeyword = 'class'
+      if ( elem instanceof type.UMLInterface ) classKeyword = 'struct'
+
+      codeWriter.writeLine(classDoc + templatePart + classKeyword + ' ' + elem.name + finalModifier + writeInheritance(elem) + ' {')
+      codeWriter.writeLine('public: ')
+
+      // add default destructor
+      codeWriter.writeLine(
+          this.getMemberDocuments('\n@brief default destructor')
+        + this.addTabString('virtual ~' + elem.name +'() = default;\n'))
+
       if (classfiedAttributes._public.length > 0) {
-        codeWriter.writeLine('public: ')
+        // codeWriter.writeLine('public: ')
         codeWriter.indent()
         write(classfiedAttributes._public)
         codeWriter.outdent()
@@ -413,9 +426,18 @@ class CppCodeGenerator {
     returnTemplateString = 'template<'
     for (i = 0; i < elem.templateParameters.length; i++) {
       var template = elem.templateParameters[i]
-      var templateStr = template.parameterType + ' '
-      templateStr += template.name + ' '
-      if (template.defaultValue.length !== 0) {
+      // var templateStr = template.parameterType + ' '
+      var templateStr = ''
+      var typenameKeyword = 'typename'
+      // Variable tparam ...
+      // if (template.name.length >= 4 
+      //     && template.name.toUpperCase().substring(template.name.length - 4) == 'ARGS')
+      //     typenameKeyword += '...'
+      templateStr += typenameKeyword + ' ' + template.name
+      if (template.defaultValue instanceof type.UMLClass || template.defaultValue instanceof type.UMLInterface){
+        templateStr += ' = ' + template.defaultValue.name
+      }
+      else if (template.defaultValue.length !== 0) {
         templateStr += ' = ' + template.defaultValue
       }
       term.push(templateStr)
@@ -605,12 +627,13 @@ class CppCodeGenerator {
       // TODO virtual fianl static 키워드는 섞어 쓸수가 없다
       if (elem.isStatic === true) {
         methodStr += 'static '
-      } else if (elem.isAbstract === true) {
+      } else if (elem.isAbstract === true || elem._parent instanceof type.UMLInterface) {
         methodStr += 'virtual '
       }
 
       // doc brief
-      docs += '\n@brief \n'+ elem.documentation.trim() + '\n\n'
+      docs += '\n@brief \n'
+      if (elem.documentation.trim().length > 0) docs += elem.documentation.trim() + '\n\n'
 
       var returnTypeParam = elem.parameters.filter(function (params) {
         return params.direction === 'return'
@@ -618,6 +641,12 @@ class CppCodeGenerator {
       var inputParams = elem.parameters.filter(function (params) {
         return ['in', 'out', 'inout'].includes(params.direction)
       })
+
+      // template paramters doc
+      var tparamDoc = this.genTemplatePatamterDoc(elem)
+      if(tparamDoc.length > 0){
+        docs += tparamDoc + '\n'
+      }
 
       // inParam
       var inputParamStrings = []
@@ -659,6 +688,10 @@ class CppCodeGenerator {
         docs+='\n'
       }
 
+      if (elem.templateParameters.length > 0){
+        methodStr += this.getTemplateParameter (elem) + '\n' + this.tabString
+      }
+      
       methodStr += ((returnTypeParam.length > 0) ? this.getType(returnTypeParam[0]) : 'void') + ' '
 
       if (isCppBody) {
@@ -705,7 +738,7 @@ class CppCodeGenerator {
         methodStr += '(' + inputParamStrings.join(', ') + ')'
         if (elem.isLeaf === true) {
           methodStr += ' final'
-        } else if (elem.isAbstract === true) { // TODO 만약 virtual 이면 모두 pure virtual? 체크 할것
+        } else if (elem.isAbstract === true  || elem._parent instanceof type.UMLInterface) { // TODO 만약 virtual 이면 모두 pure virtual? 체크 할것
           methodStr += ' = 0'
         }
         methodStr += ';'
@@ -780,6 +813,25 @@ class CppCodeGenerator {
       docs += this.tabString + ' */\n'
     }
     return docs
+  }
+
+  /**
+   * 
+   * @param {*} elem 
+   */
+  genTemplatePatamterDoc(elem) {
+    if (!elem instanceof type.UMLClass && !elem instanceof type.UMLOperation){
+      return ''
+    }
+    var doc = ''
+    if (elem.templateParameters.length > 0){
+      var i = 0
+      for (i = 0; i< elem.templateParameters.length; i++) {
+        var tparam = elem.templateParameters[i]
+        doc += '\n@tparam ' + tparam.name + ' ' + tparam.documentation
+      }
+    }
+    return doc
   }
 
   /**
