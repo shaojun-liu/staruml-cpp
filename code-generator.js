@@ -740,7 +740,7 @@ class CppCodeGenerator {
         methodStr += '(' + inputParamStrings.join(', ') + ')'
         if (elem.isLeaf === true) {
           methodStr += ' final'
-        } else if (elem.isAbstract === true  || elem._parent instanceof type.UMLInterface) { // TODO 만약 virtual 이면 모두 pure virtual? 체크 할것
+        } else if (elem._parent instanceof type.UMLInterface) { // TODO 만약 virtual 이면 모두 pure virtual? 체크 할것
           methodStr += ' = 0'
         }
         methodStr += ';'
